@@ -1,9 +1,9 @@
 <h1 align="center">deploybudget</h1>
 
 <p align="center">
-  <strong>Stop Vercel from burning your daily deployment limit on branches nobody looks at.</strong>
+  <strong>Stop Vercel from building every branch you push.</strong>
   <br>
-  Fixes <em>&quot;Deployment rate limited &mdash; retry in 24 hours&quot;</em>.
+  Fixes <em>&quot;Deployment rate limited &mdash; retry in 24 hours&quot;</em> and stops paying for builds nobody opens.
 </p>
 
 <p align="center">
@@ -14,52 +14,36 @@
 </p>
 
 <p align="center">
-  <a href="https://dfklabs.com">dfklabs</a>
+  <a href="#the-fix">The fix</a>
   &nbsp;&middot;&nbsp;
-  <a href="https://paneltir.dfklabs.com">Paneltir</a>
+  <a href="#install">Install</a>
   &nbsp;&middot;&nbsp;
-  <a href="#quick-start">Quick start</a>
+  <a href="#every-project-at-once">Every project at once</a>
   &nbsp;&middot;&nbsp;
-  <a href="#the-gotcha-most-people-hit">The gotcha</a>
-  &nbsp;&middot;&nbsp;
-  <a href="./skills/deploybudget/references/vercel-git-config.md">Config reference</a>
+  <a href="#faq">FAQ</a>
 </p>
 
 ---
 
-By default, Vercel builds **every branch you push**. On a hobby or small team plan
-that is how you end up staring at this:
+## The problem
 
-```
-Deployment rate limited — retry in 24 hours
-```
+By default, Vercel builds **every branch you push**: `feature/login`, `fix/typo`,
+that experiment from last Tuesday. Each push is a full build.
 
-This repo is a drop-in `vercel.json` (plus a script to apply it across every
-project you own) that limits automatic deployments to your production branch.
+- On the **Hobby** plan, that is how you end up locked out:
+
+  ```
+  Deployment rate limited — retry in 24 hours
+  ```
+
+- On **Pro**, build minutes are metered, so every one of those builds is on your bill.
+
+deploybudget is a drop-in `vercel.json` (and a small script to apply it to all
+your projects) that keeps automatic deployments for your production branch only.
 
 ---
 
-## The gotcha most people hit
-
-The obvious config looks like this — and it does **not** work:
-
-```jsonc
-{
-  "git": {
-    "deploymentEnabled": {
-      "main": true,
-      "develop": false,
-      "staging": false
-    }
-  }
-}
-```
-
-Vercel's rule is that **any branch you do not name defaults to `true`**. So
-`develop` and `staging` are blocked, but `feature/login`, `fix/typo`, and every
-branch you create next month still deploy. The quota keeps draining.
-
-The fix is to deny everything with a wildcard first, then allow production back:
+## The fix
 
 ```json
 {
@@ -73,210 +57,189 @@ The fix is to deny everything with a wildcard first, then allow production back:
 }
 ```
 
-`deploymentEnabled` accepts [minimatch](https://github.com/isaacs/minimatch)
-patterns, and when a branch matches several rules, **one `true` is enough to
-deploy**. `main` matches both `*` (false) and `main` (true), so it deploys.
-Everything else matches only `*`, so it does not.
+Deny every branch with the `*` wildcard, then allow production back. When a branch
+matches several rules, **one `true` is enough to deploy**: `main` matches both
+rules and deploys; every other branch matches only `*` and doesn't.
 
----
+### Why the obvious version doesn't work
 
-## Quick start
+Most people try this first:
 
-Copy [`vercel.json`](./vercel.json) into the root of your project, change `main`
-if your production branch is named something else, commit, push.
-
-```bash
-curl -O https://raw.githubusercontent.com/dfklabs/deploybudget/main/vercel.json
+```jsonc
+{
+  "git": {
+    "deploymentEnabled": {
+      "main": true,
+      "develop": false,
+      "staging": false
+    }
+  }
+}
 ```
 
-That's the whole thing. The rest of this repo is for people with more than one
-project.
-
----
-
-## Apply it to every project at once
-
-`apply.mjs` has no dependencies and needs only Node 18+. It merges the git config
-into each project's existing `vercel.json` instead of overwriting it, and
-preserves your indentation.
-
-```bash
-# See what would change, touch nothing
-node apply.mjs --scan ~/code --dry-run
-
-# Apply it for real, keeping .bak files
-node apply.mjs --scan ~/code --backup
-
-# Production branch is master, and staging should deploy too
-node apply.mjs --scan ~/code --branch master --allow staging
-```
-
-| Option | Description |
-| --- | --- |
-| `--scan <path>` | Apply to every project found under `<path>` |
-| `--branch <name>` | Production branch that stays enabled (default: `main`) |
-| `--allow <name>` | Extra branch to keep enabled (repeatable) |
-| `--depth <n>` | Max scan depth (default: `3`) |
-| `--force` | Remove existing rules that still allow other branches |
-| `--dry-run` | Print planned changes, write nothing |
-| `--backup` | Save `vercel.json.bak` before overwriting |
-
-A directory counts as a project when it contains a `package.json` or a
-`vercel.json`. `node_modules`, `.git`, `.next`, `dist`, and friends are skipped.
-Running it twice is safe — the second run reports `already production-only`.
-
----
-
-## Variants
-
-| File | Behavior |
-| --- | --- |
-| [`templates/production-only.json`](./templates/production-only.json) | Only `main` deploys |
-| [`templates/master-branch.json`](./templates/master-branch.json) | Only `master` deploys |
-| [`templates/production-and-staging.json`](./templates/production-and-staging.json) | `main` and `staging` deploy |
-| [`templates/disable-all.json`](./templates/disable-all.json) | No automatic deploys at all — CLI only |
-
----
-
-## What this does and does not do
-
-**It stops** automatic deployments triggered by pushing to any branch other than
-the ones you allow. That is where the quota goes.
-
-**It also stops pull request previews.** Preview deployments are triggered by
-branch pushes, so a blanket `"*": false` blocks them too. If you want PR previews
-but nothing else, leave `deploymentEnabled` alone and use the project's
-**Settings → Git** page in the Vercel dashboard instead, which has a separate
-control for it. You cannot express "previews only on PRs" in `vercel.json`.
-
-**It does not block manual deploys.** `vercel --prod` and the dashboard's
-redeploy button keep working, which is usually what you want as an escape hatch:
-
-```bash
-vercel --prod
-```
-
-**It deliberately omits `buildCommand`, `installCommand`, and `devCommand`.**
-You will see those in copy-pasted snippets, but hardcoding `npm run build` into a
-shared template breaks every project using pnpm, yarn, or bun, and overrides the
-framework preset Vercel already detected correctly. Set those in the dashboard,
-or add them yourself if you actually need to override something.
-
----
-
-## Why not just use the dashboard?
-
-You can — **Settings → Git** does most of this per project. The tradeoffs:
-
-|  | Dashboard | `vercel.json` |
-| --- | --- | --- |
-| Version controlled | No | Yes |
-| Survives someone else changing it | No | Yes |
-| Applies to forks and new clones | No | Yes |
-| Per-branch pattern matching | Limited | Full minimatch |
-| Bulk apply across projects | One at a time | One command |
-
-`vercel.json` wins once you have more than two or three projects. The dashboard
-wins for the one setting it owns exclusively: PR-only previews.
-
----
-
-## FAQ
-
-**Will this fix a rate limit I already hit?**
-No. The 24 hour window has to expire on its own. This prevents the next one.
-
-**Does the config apply before or after the build?**
-Before — Vercel reads `vercel.json` from the pushed commit and decides whether to
-build at all, so a blocked branch costs you nothing.
-
-**My monorepo has several Vercel projects in one repo.**
-`deploymentEnabled` is read per Vercel project from the repo root
-`vercel.json`. If your projects have different root directories, put a
-`vercel.json` in each root — `apply.mjs --scan` will find them.
-
-**I still see deployments from a branch I blocked.**
-Check for a rule that matches it and is `true`; one `true` wins over any number
-of `false`. Run `node apply.mjs <project> --force` to strip conflicting rules.
+Vercel treats **any branch you don't name as `true`**. `develop` and `staging`
+stop, but `feature/login`, `fix/typo` and every branch you create next month
+keep deploying.
 
 ---
 
 ## Install
 
-**As a Claude plugin** — this repo is a plugin. Add it from
-[Paneltir](https://paneltir.dfklabs.com), or point Claude at this repo directly.
-Once installed, just say *"my Vercel quota is maxed out"* and the skill takes
-over: it detects your production branch, previews the change, and applies it.
+Pick whichever suits you. All three end with the same `vercel.json`.
 
-**By hand** — copy [`vercel.json`](./vercel.json) into your project, or clone
-this repo and run `apply.mjs` as shown above. No plugin required.
+### 1. Ask Claude
 
-### What the plugin bundles
+Paste this into [Claude Code](https://claude.com/claude-code) inside your project:
 
-| Path | What it is |
-| --- | --- |
-| `.claude-plugin/plugin.json` | Plugin manifest |
-| `skills/deploybudget/SKILL.md` | The skill Claude loads |
-| `skills/.../references/vercel-git-config.md` | Full `deploymentEnabled` semantics |
-| `apply.mjs` | The script the skill runs |
-| `templates/*.json` | Ready-made config variants |
-
----
-
-## Development
-
-No dependencies and no build step. Node 18+ is the only requirement.
-
-```bash
-npm test        # behaviour tests for apply.mjs against the fixtures in test/
-npm run verify  # release invariants (versions, templates, licensing, packaging)
+```text
+Add deploybudget (github.com/dfklabs/deploybudget) to this project: detect my production branch, show me the vercel.json change first, then apply it so only production deploys automatically.
 ```
 
-`npm test` runs the real CLI against a copy of each fixture in `test/fixtures`
-— a clean project, one with an existing `vercel.json`, malformed JSON,
-`deploymentEnabled: false`, a conflicting `true` rule, and a monorepo — so the
-tests exercise the same code path a user does and never touch the repository.
+### 2. Install the Claude Code plugin
 
-`npm run verify` guards what is cheap to break and expensive to discover after
-a release: version drift between `package.json`, `.claude-plugin/plugin.json`
-and the skill; a template that stops denying with `"*": false` or never allows
-production back; a `buildCommand` sneaking into a shared template; a missing
-license file; a git tag that does not match the version being released. It runs
-in CI and again from `prepublishOnly`.
+```bash
+claude plugin marketplace add dfklabs/deploybudget
+claude plugin install deploybudget@deploybudget
+```
 
-Both run on Node 18, 20 and 22 in GitHub Actions on every push and pull request.
+From then on, say *"my Vercel quota is maxed out"* in any project. Claude
+detects your production branch, shows you the change and applies it.
+
+### 3. By hand
+
+Download the file into the root of your project, change `main` if your
+production branch has another name, then commit and push:
+
+```bash
+curl -O https://raw.githubusercontent.com/dfklabs/deploybudget/main/vercel.json
+```
+
+Already have a `vercel.json`? Copy only the `git` block into it, or use the
+script below, which merges instead of overwriting.
 
 ---
 
-## Support
+## Every project at once
 
-Free and open source, no strings attached. If it saved you a deployment quota
-or an afternoon, a star on the repo is the most useful thing you can do — it is
-how other people find it.
+`apply.mjs` needs Node 18 or newer and nothing else. It finds every project under
+a folder, merges the `git` block into each existing `vercel.json`, and keeps your
+formatting.
 
-- Website — [dfklabs.com](https://dfklabs.com)
-- Panel — [paneltir.dfklabs.com](https://paneltir.dfklabs.com)
-- Issues — [github.com/dfklabs/deploybudget/issues](https://github.com/dfklabs/deploybudget/issues)
+```bash
+git clone https://github.com/dfklabs/deploybudget
+cd deploybudget
+
+# Preview the changes without writing anything
+node apply.mjs --scan ~/code --dry-run
+
+# Apply them, keeping a .bak copy of every file it changes
+node apply.mjs --scan ~/code --backup
+
+# Production is "master", and "staging" should keep deploying too
+node apply.mjs --scan ~/code --branch master --allow staging
+```
+
+| Option | What it does |
+| --- | --- |
+| `--scan <path>` | Apply to every project found under `<path>` |
+| `--branch <name>` | Production branch that keeps deploying (default: `main`) |
+| `--allow <name>` | Another branch that keeps deploying (repeatable) |
+| `--depth <n>` | How deep to look for projects (default: `3`) |
+| `--force` | Remove existing rules that still let other branches deploy |
+| `--dry-run` | Show what would change and write nothing |
+| `--backup` | Save `vercel.json.bak` before changing a file |
+
+A folder counts as a project when it has a `package.json` or a `vercel.json`.
+`node_modules`, `.git`, `.next`, `dist` and similar folders are skipped. Running
+it twice is safe: the second run reports `already production-only`.
+
+### Ready-made variants
+
+| File | Deploys automatically |
+| --- | --- |
+| [`templates/production-only.json`](./templates/production-only.json) | `main` only |
+| [`templates/master-branch.json`](./templates/master-branch.json) | `master` only |
+| [`templates/production-and-staging.json`](./templates/production-and-staging.json) | `main` and `staging` |
+| [`templates/disable-all.json`](./templates/disable-all.json) | Nothing; deploy from the CLI yourself |
+
+---
+
+## What changes, and what doesn't
+
+- **Branch pushes stop deploying**, except the branches you allow. That is where
+  the quota and the build minutes go.
+- **Pull request previews stop too.** Previews are triggered by branch pushes, so
+  `"*": false` blocks them as well. If you want previews on pull requests and
+  nothing else, skip this file and use **Settings → Git** in the Vercel
+  dashboard, which has a separate switch for that. `vercel.json` can't express
+  "previews on pull requests only".
+- **Manual deploys still work.** `vercel --prod` and the dashboard's Redeploy
+  button are unaffected, so you always have a way out.
+- **Your build settings are untouched.** The template has no `buildCommand`,
+  `installCommand` or `devCommand`, so it never overrides the framework preset
+  Vercel detected or breaks a pnpm, yarn or bun project.
+
+### Why not just use the dashboard?
+
+You can: **Settings → Git** covers most of this, one project at a time.
+
+|  | Dashboard | `vercel.json` |
+| --- | --- | --- |
+| In version control | No | Yes |
+| Stays put when someone else changes settings | No | Yes |
+| Carries over to forks and new clones | No | Yes |
+| Branch patterns | Limited | Full [minimatch](https://github.com/isaacs/minimatch) |
+| Apply to many projects | One by one | One command |
+
+`vercel.json` wins once you have more than a couple of projects. The dashboard
+wins for the one thing only it can do: previews on pull requests only.
+
+---
+
+## FAQ
+
+**Will this lift a rate limit I've already hit?**
+No. The 24-hour window has to run out on its own. This stops the next one.
+
+**Does a blocked branch still cost a build?**
+No. Vercel reads `vercel.json` from the pushed commit before building and skips
+the build entirely.
+
+**My monorepo has several Vercel projects.**
+Each Vercel project reads the `vercel.json` in its own root directory. Put one in
+each root; `apply.mjs --scan` finds them all.
+
+**A branch I blocked is still deploying.**
+Some other rule matches it with `true`, and one `true` wins over any number of
+`false`. Run `node apply.mjs <project> --force` to remove the conflicting rules.
+
+---
+
+## Contributing
+
+No dependencies and no build step; Node 18 or newer is all you need.
+
+```bash
+npm test        # runs the real CLI against the fixtures in test/
+npm run verify  # release checks: versions, templates, licences, packaging
+```
+
+Both run on Node 18, 20 and 22 on every push and pull request. Issues and pull
+requests are welcome at
+[github.com/dfklabs/deploybudget/issues](https://github.com/dfklabs/deploybudget/issues).
+
+If deploybudget saved you a quota or a bill, a star helps other people find it.
 
 ---
 
 ## License
 
-Two licenses, on purpose.
-
-| Part | License | What it means for you |
+| Part | License | In short |
 | --- | --- | --- |
-| `apply.mjs` and the docs | Apache-2.0 | Use it anywhere, commercially included. Keep the notice, and say so if you modify it. |
-| `vercel.json`, `templates/*.json` | CC0-1.0 (public domain) | Copy into your projects freely. **No attribution required.** |
+| `apply.mjs` and the docs | Apache-2.0 | Use it anywhere, commercially too. Keep the notice and mark your changes. |
+| `vercel.json`, `templates/*.json` | CC0-1.0 | Public domain. Paste them into your projects, no attribution needed. |
 
-The config files are split out deliberately. They are trivial, purely
-functional configuration, and requiring a license header on a file you paste
-into your own repo would be absurd — so we waived it outright.
+See [LICENSE](./LICENSE), [NOTICE](./NOTICE) and [templates/LICENSE](./templates/LICENSE).
+"dfklabs" is a trademark of dfklabs and is not covered by these licenses.
 
-Apache-2.0 grants no trademark rights. "dfklabs" and "Paneltir" are ours; the
-code is yours.
-
-See [LICENSE](./LICENSE), [NOTICE](./NOTICE), and
-[templates/LICENSE](./templates/LICENSE).
-
-Copyright 2026 [dfklabs](https://dfklabs.com).
+Made by [dfklabs](https://dfklabs.com).
