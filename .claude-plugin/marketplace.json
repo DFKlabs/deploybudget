@@ -1,0 +1,15 @@
+{
+  "name": "deploybudget",
+  "description": "Stop Vercel from building every branch you push.",
+  "owner": {
+    "name": "dfklabs",
+    "url": "https://dfklabs.com"
+  },
+  "plugins": [
+    {
+      "name": "deploybudget",
+      "source": "./",
+      "description": "Stop Vercel from burning your daily deployment limit on branches nobody looks at. Fixes \"Deployment rate limited — retry in 24 hours\"."
+    }
+  ]
+}
